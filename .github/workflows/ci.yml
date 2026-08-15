@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff==0.5.5
+
+      - name: Lint
+        run: ruff check producer/ spark/
+
+      - name: Format check
+        run: ruff format --check producer/ spark/
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # PySpark starts a JVM. Without a JDK the whole suite errors at the
+      # session fixture rather than at any individual assertion.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r spark/requirements.txt
+
+      - name: Run tests
+        # SPARK_LOCAL_IP is set by conftest.py, but setting it here too means a
+        # failure surfaces as a test error rather than a 60s accept() timeout.
+        env:
+          SPARK_LOCAL_IP: 127.0.0.1
+        run: pytest spark/ -v --tb=short
+
+  sql:
+    name: SQL syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # pglast wraps libpg_query -- the actual PostgreSQL parser. This catches
+      # syntax errors before anyone runs a script against a live database,
+      # which matters most for the migration script since it is destructive.
+      - name: Install pglast
+        run: pip install pglast==6.2
+
+      - name: Parse all SQL scripts
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          import pglast
+
+          failed = False
+          for path in sorted(pathlib.Path("sql").glob("*.sql")):
+              text = path.read_text(encoding="utf-8")
+              # psql meta-commands are not SQL and libpg_query rejects them.
+              cleaned = "\n".join(
+                  line for line in text.splitlines()
+                  if not line.lstrip().startswith("\\")
+              )
+              try:
+                  statements = pglast.parse_sql(cleaned)
+              except Exception as exc:
+                  print(f"FAIL  {path.name}: {exc}")
+                  failed = True
+              else:
+                  print(f"ok    {path.name}  ({len(statements)} statements)")
+
+          sys.exit(1 if failed else 0)
+          PY
+
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: iot_user
+          POSTGRES_PASSWORD: iot_password
+          POSTGRES_DB: iot_dashboard
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U iot_user -d iot_dashboard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # Applies the schema against a real PostgreSQL instance. A script that
+      # parses is not necessarily a script that runs -- constraint ordering,
+      # partition-key rules and reserved keywords only fail at execution.
+      - name: Apply schema
+        env:
+          PGPASSWORD: iot_password
+        run: |
+          set -e
+          for f in sql/01_schema.sql sql/02_kpi_views.sql sql/03_sample_data.sql \
+                   sql/04_star_schema.sql sql/05_seed_dimensions.sql \
+                   sql/07_row_level_security.sql; do
+            echo "== $f"
+            psql -h localhost -p 5433 -U iot_user -d iot_dashboard \
+                 -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+
+      - name: Verify dimensions seeded
+        env:
+          PGPASSWORD: iot_password
+        run: |
+          psql -h localhost -p 5433 -U iot_user -d iot_dashboard -t -A -c "
+            SELECT 'dim_date=' || COUNT(*) FROM mart.dim_date
+            UNION ALL SELECT 'dim_time=' || COUNT(*) FROM mart.dim_time
+            UNION ALL SELECT 'dim_machine=' || COUNT(*) FROM mart.dim_machine;"
+
+      - name: Verify Unknown members exist
+        env:
+          PGPASSWORD: iot_password
+        run: |
+          psql -h localhost -p 5433 -U iot_user -d iot_dashboard \
+               -v ON_ERROR_STOP=1 -t -A -c "
+            DO \$\$
+            DECLARE missing INT;
+            BEGIN
+              SELECT COUNT(*) INTO missing FROM (
+                SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM mart.dim_machine WHERE machine_key = -1)
+                UNION ALL
+                SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM mart.dim_machine_status WHERE status_key = -1)
+              ) t;
+              IF missing > 0 THEN
+                RAISE EXCEPTION 'Unknown member (-1) missing from % dimension(s)', missing;
+              END IF;
+            END \$\$;"

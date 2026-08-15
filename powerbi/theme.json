@@ -1,0 +1,125 @@
+{
+  "name": "IoT Operations - Navy",
+  "dataColors": [
+    "#0F2537", "#E8622C", "#6FB3E8", "#1B3A52", "#F0916B",
+    "#9FB6C6", "#2E5C7A", "#C44A18", "#B8D4EC", "#4A7A96"
+  ],
+  "good": "#2E7D32",
+  "neutral": "#E8622C",
+  "bad": "#C62828",
+  "maximum": "#0F2537",
+  "center": "#6FB3E8",
+  "minimum": "#E1DFDD",
+  "background": "#FFFFFF",
+  "foreground": "#0F2537",
+  "tableAccent": "#0F2537",
+  "textClasses": {
+    "title":      { "fontFace": "Segoe UI Semibold", "fontSize": 11, "color": "#0F2537" },
+    "header":     { "fontFace": "Segoe UI Semibold", "fontSize": 10, "color": "#0F2537" },
+    "label":      { "fontFace": "Segoe UI",          "fontSize": 9,  "color": "#7A7A7A" },
+    "callout":    { "fontFace": "Segoe UI Bold",     "fontSize": 18, "color": "#0F2537" },
+    "largeTitle": { "fontFace": "Segoe UI Bold",     "fontSize": 22, "color": "#0F2537" }
+  },
+  "visualStyles": {
+    "*": {
+      "*": {
+        "background":   [{ "show": true, "color": { "solid": { "color": "#FFFFFF" } }, "transparency": 0 }],
+        "border":       [{ "show": true, "color": { "solid": { "color": "#E1DFDD" } }, "radius": 6 }],
+        "dropShadow":   [{ "show": false }],
+        "visualHeader": [{ "show": false }],
+        "title": [{
+          "show": true,
+          "fontColor": { "solid": { "color": "#0F2537" } },
+          "fontFamily": "Segoe UI Semibold",
+          "fontSize": 11,
+          "alignment": "left",
+          "background": { "solid": { "color": "#FFFFFF" } }
+        }],
+        "categoryAxis": [{
+          "show": true,
+          "showAxisTitle": false,
+          "gridlineShow": false,
+          "labelColor": { "solid": { "color": "#7A7A7A" } },
+          "fontSize": 9
+        }],
+        "valueAxis": [{
+          "show": true,
+          "showAxisTitle": false,
+          "gridlineShow": true,
+          "gridlineColor": { "solid": { "color": "#E1DFDD" } },
+          "gridlineThickness": 1,
+          "labelColor": { "solid": { "color": "#7A7A7A" } },
+          "fontSize": 9
+        }],
+        "legend": [{
+          "show": true,
+          "position": "TopCenter",
+          "showTitle": false,
+          "labelColor": { "solid": { "color": "#7A7A7A" } },
+          "fontSize": 9
+        }],
+        "labels": [{
+          "show": true,
+          "color": { "solid": { "color": "#0F2537" } },
+          "fontSize": 9
+        }]
+      }
+    },
+    "page": {
+      "*": {
+        "background": [{ "color": { "solid": { "color": "#FFFFFF" } }, "transparency": 0 }],
+        "outspace":   [{ "color": { "solid": { "color": "#F5F5F5" } }, "transparency": 0 }]
+      }
+    },
+    "card": {
+      "*": {
+        "labels":         [{ "fontSize": 18, "fontFamily": "Segoe UI Bold", "color": { "solid": { "color": "#0F2537" } } }],
+        "categoryLabels": [{ "fontSize": 10, "color": { "solid": { "color": "#7A7A7A" } } }],
+        "title":          [{ "show": false }]
+      }
+    },
+    "tableEx": {
+      "*": {
+        "grid": [{
+          "gridVertical": false,
+          "gridHorizontal": true,
+          "gridHorizontalColor": { "solid": { "color": "#E1DFDD" } },
+          "rowPadding": 4
+        }],
+        "columnHeaders": [{
+          "fontFamily": "Segoe UI Semibold",
+          "fontSize": 10,
+          "fontColor": { "solid": { "color": "#0F2537" } },
+          "backColor": { "solid": { "color": "#FFFFFF" } },
+          "outline": "BottomOnly"
+        }],
+        "values": [{ "fontSize": 9, "fontColor": { "solid": { "color": "#7A7A7A" } } }]
+      }
+    },
+    "pivotTable": {
+      "*": {
+        "columnHeaders": [{ "fontFamily": "Segoe UI Semibold", "fontSize": 10, "fontColor": { "solid": { "color": "#0F2537" } } }],
+        "rowHeaders":    [{ "fontFamily": "Segoe UI Semibold", "fontSize": 10, "fontColor": { "solid": { "color": "#0F2537" } } }],
+        "values":        [{ "fontSize": 9 }]
+      }
+    },
+    "slicer": {
+      "*": {
+        "background": [{ "show": true, "color": { "solid": { "color": "#FFFFFF" } } }],
+        "border":     [{ "show": true, "color": { "solid": { "color": "#E1DFDD" } }, "radius": 4 }],
+        "title":      [{ "show": false }],
+        "items":      [{ "fontColor": { "solid": { "color": "#0F2537" } }, "fontSize": 9 }]
+      }
+    },
+    "textbox": {
+      "*": { "background": [{ "show": false }], "border": [{ "show": false }] }
+    },
+    "actionButton": {
+      "*": {
+        "fill":    [{ "show": true, "fillColor": { "solid": { "color": "#0F2537" } }, "transparency": 0 }],
+        "text":    [{ "show": true, "fontColor": { "solid": { "color": "#9FB6C6" } }, "fontSize": 10 }],
+        "outline": [{ "show": false }]
+      }
+    }
+  }
+}

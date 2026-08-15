@@ -1,0 +1,143 @@
+# =============================================================================
+# IoT Device Data Streamlining -- local infrastructure
+# Brings up: Zookeeper, Kafka, PostgreSQL, Adminer (DB browser)
+#
+# Usage:
+#   docker compose up -d
+#   docker compose ps          # all four should report (healthy)
+#   docker compose logs -f kafka postgres
+#
+# NOTE ON SCALE: single broker, replication factor 1, single Postgres.
+# This is a development topology. See docs/PRODUCTION_READINESS.md for what
+# a real deployment requires.
+# =============================================================================
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: iot-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      # Port check via bash's /dev/tcp rather than `echo ruok | nc`.
+      # Two reasons the obvious version does not work on this image:
+      # netcat is not installed, and the four-letter commands (ruok, srvr)
+      # are not on the default allowlist, so even with nc the probe would
+      # be refused. A listening port is the strongest signal available
+      # here; Kafka's own healthcheck covers whether the ensemble is
+      # actually usable.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/2181' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: iot-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        # Waiting for the container to exist is not the same as waiting for it
+        # to serve. Without this the broker starts, fails to reach Zookeeper,
+        # and dies -- which previously presented as NoBrokersAvailable in the
+        # streaming job several minutes later.
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # Two advertised listeners: containers resolve kafka:29092, host
+      # processes resolve localhost:9092. A single listener leaves one of the
+      # two with an address it cannot reach.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Seven days of replay headroom. The default is also 7 days; it is set
+      # explicitly so that changing it is a deliberate act.
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 2147483648
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 45s
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+
+  postgres:
+    image: postgres:16
+    container_name: iot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-iot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iot_password}
+      POSTGRES_DB: ${POSTGRES_DB:-iot_dashboard}
+    ports:
+      # Published on 5433 so it cannot collide with a local PostgreSQL install.
+      # A collision on 5432 connects successfully to the wrong database, which
+      # presents as missing data rather than as a connection error.
+      - "5433:5432"
+    volumes:
+      - iot_pg_data:/var/lib/postgresql/data
+      # Only the base schema is auto-applied. The star schema, migration and
+      # RLS scripts are run deliberately -- 06 ends with a reconciliation
+      # query whose output must be read before its COMMIT is uncommented.
+      - ./sql/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./sql/02_kpi_views.sql:/docker-entrypoint-initdb.d/02_kpi_views.sql:ro
+      - ./sql/03_sample_data.sql:/docker-entrypoint-initdb.d/03_sample_data.sql:ro
+    command:
+      - postgres
+      - -c
+      - max_connections=100
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      # Log anything slower than a second. At this volume nothing legitimate
+      # takes that long, so every entry is worth reading.
+      - log_min_duration_statement=1000
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iot_user} -d ${POSTGRES_DB:-iot_dashboard}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+
+  adminer:
+    image: adminer:latest
+    container_name: iot-adminer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  iot_pg_data:

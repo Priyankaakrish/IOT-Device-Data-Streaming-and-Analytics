@@ -1,0 +1,18 @@
+# Airflow scans its DAGs folder recursively and imports every .py file it
+# finds. The DAGs folder here is the project root, so without this the
+# scheduler would try to import the PySpark job and the Kafka producer on
+# every parse cycle -- starting a JVM, opening a Kafka connection, and
+# filling the log with import errors that look like DAG failures.
+#
+# Only airflow_dags.py should be parsed.
+
+spark/
+producer/
+sql/
+docs/
+powerbi/
+.github/
+.git/
+.pytest_cache/
+.ruff_cache/
+logs/

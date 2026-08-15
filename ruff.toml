@@ -1,0 +1,43 @@
+# Ruff configuration
+#
+# Rule selection is deliberate rather than "everything ruff offers". A lint
+# config that fires on correct code trains people to ignore it.
+
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes -- unused names, undefined names
+    "I",    # isort -- import ordering
+    "UP",   # pyupgrade -- outdated syntax
+    "B",    # bugbear -- likely bugs
+    "SIM",  # simplify
+    "C4",   # comprehensions
+]
+
+ignore = [
+    # Event times in this pipeline are deliberately naive. The Spark session,
+    # the JDBC connection and the warehouse are all pinned to UTC, and
+    # dim_time is keyed on minutes since midnight. Attaching tzinfo in tests
+    # would misrepresent what the pipeline actually receives.
+    "DTZ001",
+    # Executable bit on shell-invoked scripts is not meaningful on Windows,
+    # which is the primary development platform here.
+    "EXE002",
+    # Long lines inside SQL string literals are more readable than wrapped
+    # ones; the SQL is meant to be copy-pasteable into psql.
+    "E501",
+]
+
+[lint.per-file-ignores]
+# The v1 job is retained to document the migration, not to be maintained.
+# It is excluded from lint rather than deleted, because the README refers to
+# it and the before/after comparison is part of the project's value.
+"spark/streaming_job.py" = ["F841", "I001", "ARG", "B"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

@@ -1,0 +1,431 @@
+=====================================================================
+DAX MEASURE LIBRARY -- IoT Device Data Streamlining
+=====================================================================
+Target model : mart.* star schema (sql/04_star_schema.sql)
+Convention   : create an empty table named "_Measures" and place every
+               measure there. Never store measures on fact tables --
+               they become unfindable as the model grows.
+
+Display folders (set via Properties pane -> Display folder):
+    01 Base                 raw additive aggregations
+    02 OEE                  availability / performance / quality
+    03 Quality              scrap, yield
+    04 Reliability          MTBF, MTTR, downtime
+    05 Alerts               counts, MTTA, SLA
+    06 Energy               consumption, intensity
+    07 Time Intelligence    MTD, YoY, rolling
+    08 Formatting           colour, labels, dynamic titles
+    99 Internal             helpers, hidden from report view
+
+Set a format string on EVERY measure. Percentages 0.0%, counts #,0,
+currency #,0.00. Unformatted measures look unfinished in review.
+
+SECTION B at the bottom keeps the legacy view-based measures for the
+existing dashboard, so nothing breaks during the migration.
+
+
+=====================================================================
+SECTION A -- STAR SCHEMA MEASURES (use these going forward)
+=====================================================================
+
+-- ==================== 01 Base ====================
+
+Total Readings =
+COUNTROWS ( fact_production_hourly )
+
+Total Units Produced =
+SUM ( fact_production_hourly[units_produced] )
+
+Total Good Units =
+SUM ( fact_production_hourly[good_units] )
+
+Total Scrap Units =
+SUM ( fact_production_hourly[scrap_units] )
+
+Total Runtime (min) =
+SUM ( fact_production_hourly[runtime_minutes] )
+
+Total Idle (min) =
+SUM ( fact_production_hourly[idle_minutes] )
+
+Total Downtime (min) =
+SUM ( fact_production_hourly[downtime_minutes] )
+
+Total Planned Time (min) =
+SUM ( fact_production_hourly[planned_minutes] )
+
+-- WEIGHTED average. A plain AVERAGE() over pre-aggregated hourly
+-- averages is an average-of-averages, which is wrong whenever hours
+-- contain different reading counts. This is exactly why temp_sum and
+-- reading_count are persisted in the fact table.
+Avg Temperature (C) =
+DIVIDE (
+    SUM ( fact_production_hourly[temp_sum] ),
+    SUM ( fact_production_hourly[reading_count] )
+)
+
+Max Temperature (C) =
+MAX ( fact_production_hourly[max_temperature_c] )
+
+Avg Vibration (mm/s) =
+AVERAGEX ( fact_production_hourly, fact_production_hourly[avg_vibration_mm_s] )
+
+
+-- ==================== 02 OEE ====================
+-- OEE = Availability x Performance x Quality.
+-- Compute each component at the correct grain then multiply.
+-- NEVER average the three percentages together.
+
+-- Planned maintenance and changeover are excluded from the denominator.
+-- Penalising a plant for scheduled maintenance makes OEE useless as a
+-- management signal.
+Availability % =
+VAR PlannedTime = [Total Planned Time (min)]
+VAR PlannedStops =
+    CALCULATE (
+        [Total Downtime (min)],
+        dim_machine_status[is_planned_downtime] = TRUE ()
+    )
+VAR OperatingTime = [Total Runtime (min)]
+RETURN
+    DIVIDE ( OperatingTime, PlannedTime - PlannedStops )
+
+-- The MIN(...,1) cap matters. Sensor noise or a mis-set ideal cycle
+-- time can produce >100% performance, which is physically impossible
+-- and destroys credibility instantly in a review.
+--
+-- Theoretical time is computed PER MACHINE and then summed. Averaging
+-- ideal_cycle_time_sec across machines would be meaningless when a
+-- conveyor runs at 2 s/unit and a press at 20 s/unit.
+--
+-- Note: do NOT write this as
+--     AVERAGEX ( VALUES ( dim_machine[machine_key] ),
+--                dim_machine[ideal_cycle_time_sec] )
+-- VALUES() on a single column provides row context for that column
+-- only, so ideal_cycle_time_sec is not reachable inside the iterator.
+Performance % =
+VAR TheoreticalMin =
+    SUMX (
+        VALUES ( dim_machine[machine_key] ),
+        CALCULATE ( [Total Units Produced] * AVERAGE ( dim_machine[ideal_cycle_time_sec] ) / 60 )
+    )
+RETURN
+    MIN ( DIVIDE ( TheoreticalMin, [Total Runtime (min)] ), 1 )
+
+Quality % =
+DIVIDE ( [Total Good Units], [Total Units Produced] )
+
+OEE % =
+[Availability %] * [Performance %] * [Quality %]
+
+-- World-class OEE is 85% (90% x 95% x 99.9%).
+-- Move to a dim_target table if targets vary by line.
+OEE Target % = 0.85
+
+OEE vs Target =
+[OEE %] - [OEE Target %]
+
+-- Translating OEE loss into lost units is what makes the metric
+-- actionable for a plant manager.
+OEE Gap (units) =
+VAR PotentialUnits =
+    DIVIDE ( [Total Runtime (min)] * 60, AVERAGE ( dim_machine[ideal_cycle_time_sec] ) )
+RETURN
+    PotentialUnits - [Total Units Produced]
+
+-- Loss waterfall -- decomposes the gap between theoretical and actual
+Availability Loss (min) =
+( [Total Planned Time (min)]
+  - CALCULATE ( [Total Downtime (min)], dim_machine_status[is_planned_downtime] = TRUE () ) )
+- [Total Runtime (min)]
+
+Performance Loss (min) =
+[Total Runtime (min)] * ( 1 - [Performance %] )
+
+Quality Loss (min) =
+VAR IdealCycleSec = AVERAGE ( dim_machine[ideal_cycle_time_sec] )
+RETURN
+    [Total Scrap Units] * IdealCycleSec / 60
+
+
+-- ==================== 03 Quality ====================
+
+Scrap Rate % =
+DIVIDE ( [Total Scrap Units], [Total Units Produced] )
+
+First Pass Yield % =
+DIVIDE ( [Total Good Units], [Total Units Produced] )
+
+Defects Per Million =
+DIVIDE ( [Total Scrap Units], [Total Units Produced] ) * 1000000
+
+
+-- ==================== 04 Reliability ====================
+
+Downtime Events =
+COUNTROWS ( fact_downtime )
+
+MTBF (hours) =
+DIVIDE ( [Total Runtime (min)], [Downtime Events] ) / 60
+
+MTTR (hours) =
+DIVIDE (
+    SUMX ( fact_downtime, fact_downtime[duration_minutes] ),
+    [Downtime Events]
+) / 60
+
+Technical Availability % =
+DIVIDE ( [MTBF (hours)], [MTBF (hours)] + [MTTR (hours)] )
+
+Open Downtime Events =
+CALCULATE ( COUNTROWS ( fact_downtime ), fact_downtime[is_open] = TRUE () )
+
+Unplanned Downtime (min) =
+CALCULATE ( [Total Downtime (min)], dim_machine_status[is_planned_downtime] = FALSE () )
+
+
+-- ==================== 05 Alerts ====================
+
+Total Alerts =
+SUM ( fact_alert[alert_count] )
+
+-- Replaces the 15M figure from the legacy model. With transition-grained
+-- facts plus the uq_alert_occurrence constraint, this count is genuine.
+Active Alerts =
+CALCULATE ( [Total Alerts], fact_alert[is_open] = TRUE () )
+
+Critical Alerts =
+CALCULATE ( [Total Alerts], dim_alert_type[severity] = "CRITICAL" )
+
+Alerts Last 24h =
+CALCULATE (
+    [Total Alerts],
+    fact_alert[raised_at] >= MAX ( fact_alert[raised_at] ) - 1
+)
+
+MTTA (min) =
+AVERAGEX (
+    FILTER ( fact_alert, NOT ISBLANK ( fact_alert[time_to_acknowledge_min] ) ),
+    fact_alert[time_to_acknowledge_min]
+)
+
+SLA Compliance % =
+VAR Acknowledged =
+    CALCULATE ( COUNTROWS ( fact_alert ), NOT ISBLANK ( fact_alert[acknowledged_at] ) )
+VAR WithinSLA =
+    CALCULATE ( COUNTROWS ( fact_alert ), fact_alert[breached_sla] = FALSE () )
+RETURN
+    DIVIDE ( WithinSLA, Acknowledged )
+
+-- Normalising by production volume stops a high-output machine looking
+-- artificially unreliable.
+Alert Rate per 1k Units =
+DIVIDE ( [Total Alerts], [Total Units Produced] ) * 1000
+
+
+-- ==================== 06 Energy ====================
+
+Total Energy (kWh) =
+SUM ( fact_production_hourly[energy_kwh] )
+
+Energy per Unit (kWh) =
+DIVIDE ( [Total Energy (kWh)], [Total Units Produced] )
+
+Energy Cost =
+[Total Energy (kWh)] * 0.14        -- replace with a dim_tariff lookup
+
+Energy Intensity vs Rated % =
+VAR ActualAvgKw = DIVIDE ( [Total Energy (kWh)] * 60, [Total Runtime (min)] )
+VAR RatedKw     = AVERAGE ( dim_machine[rated_power_kw] )
+RETURN
+    DIVIDE ( ActualAvgKw, RatedKw )
+
+
+-- ==================== 07 Time Intelligence ====================
+-- Requires dim_date marked as the date table:
+--   Table tools -> Mark as date table -> full_date
+-- Without this, DATESYTD and siblings silently return wrong results at
+-- year boundaries.
+
+OEE MTD = CALCULATE ( [OEE %], DATESMTD ( dim_date[full_date] ) )
+
+OEE QTD = CALCULATE ( [OEE %], DATESQTD ( dim_date[full_date] ) )
+
+OEE PM  = CALCULATE ( [OEE %], PREVIOUSMONTH ( dim_date[full_date] ) )
+
+OEE MoM % = DIVIDE ( [OEE %] - [OEE PM], [OEE PM] )
+
+OEE PY  = CALCULATE ( [OEE %], SAMEPERIODLASTYEAR ( dim_date[full_date] ) )
+
+OEE Rolling 7D =
+CALCULATE (
+    [OEE %],
+    DATESINPERIOD ( dim_date[full_date], MAX ( dim_date[full_date] ), -7, DAY )
+)
+
+OEE Rolling 30D =
+CALCULATE (
+    [OEE %],
+    DATESINPERIOD ( dim_date[full_date], MAX ( dim_date[full_date] ), -30, DAY )
+)
+
+-- Suppresses future dates. Without this, line charts run flat to the
+-- end of the date dimension.
+OEE % (Visual) =
+IF ( MIN ( dim_date[full_date] ) <= TODAY (), [OEE %] )
+
+
+-- ==================== 08 Formatting and UX ====================
+-- Apply via Format -> Callout value -> Colour -> fx -> Field value
+
+OEE Status Colour =
+SWITCH (
+    TRUE (),
+    [OEE %] >= 0.85, "#2E7D32",
+    [OEE %] >= 0.65, "#F9A825",
+    "#C62828"
+)
+
+OEE Trend Indicator =
+VAR Delta = [OEE %] - [OEE PM]
+RETURN
+    SWITCH (
+        TRUE (),
+        Delta >  0.02, UNICHAR ( 9650 ) & " " & FORMAT ( Delta, "+0.0%;-0.0%" ),
+        Delta < -0.02, UNICHAR ( 9660 ) & " " & FORMAT ( Delta, "+0.0%;-0.0%" ),
+        "Flat"
+    )
+
+Dynamic Page Title =
+VAR MachineSel =
+    IF (
+        ISFILTERED ( dim_machine[machine_name] ),
+        CONCATENATEX ( VALUES ( dim_machine[machine_name] ), dim_machine[machine_name], ", " ),
+        "All Machines"
+    )
+VAR DateRange =
+    FORMAT ( MIN ( dim_date[full_date] ), "dd MMM yyyy" ) & " - " &
+    FORMAT ( MAX ( dim_date[full_date] ), "dd MMM yyyy" )
+RETURN
+    "Production Performance  |  " & MachineSel & "  |  " & DateRange
+
+-- Every production dashboard needs an explicit empty state. A blank
+-- visual is indistinguishable from a broken one.
+No Data Message =
+IF (
+    ISBLANK ( [Total Readings] ),
+    "No telemetry for the selected filters.",
+    ""
+)
+
+
+-- ==================== 99 Internal ====================
+
+_Selected Machine Count =
+COUNTROWS ( VALUES ( dim_machine[machine_key] ) )
+
+_Last Refresh =
+"Data as at " & FORMAT ( MAX ( fact_production_hourly[window_end] ), "dd MMM yyyy HH:mm" )
+
+
+=====================================================================
+CALCULATION GROUPS (advanced -- requires Tabular Editor 2, free)
+=====================================================================
+Instead of writing MTD/QTD/YoY variants for all 40 measures, define ONE
+calculation group. This is the single clearest signal of DAX maturity in
+a portfolio project: one group replaces roughly 200 measures.
+
+Calculation group: "Time Intelligence"
+
+  Current  = SELECTEDMEASURE ()
+  MTD      = CALCULATE ( SELECTEDMEASURE (), DATESMTD ( dim_date[full_date] ) )
+  QTD      = CALCULATE ( SELECTEDMEASURE (), DATESQTD ( dim_date[full_date] ) )
+  YTD      = CALCULATE ( SELECTEDMEASURE (), DATESYTD ( dim_date[full_date] ) )
+  PY       = CALCULATE ( SELECTEDMEASURE (), SAMEPERIODLASTYEAR ( dim_date[full_date] ) )
+  YoY %    = DIVIDE (
+                 SELECTEDMEASURE ()
+                   - CALCULATE ( SELECTEDMEASURE (), SAMEPERIODLASTYEAR ( dim_date[full_date] ) ),
+                 CALCULATE ( SELECTEDMEASURE (), SAMEPERIODLASTYEAR ( dim_date[full_date] ) )
+             )
+
+
+=====================================================================
+PERFORMANCE NOTES
+=====================================================================
+1. Avoid FILTER over whole fact tables.
+   CALCULATE([X], fact[col] = value)          -- optimised
+   CALCULATE([X], FILTER(fact, fact[col]=v))  -- materialises the table
+
+2. Prefer DIVIDE over "/". Handles divide-by-zero without IFERROR.
+
+3. Use variables. Each VAR evaluates once; repeating a measure
+   reference re-evaluates it.
+
+4. All measures above target fact_production_hourly (~720 rows per
+   machine per month), NOT fact_sensor_reading (~518k). Only the
+   drill-through detail page should touch the atomic fact.
+
+5. Run Tabular Editor's Best Practice Analyzer before calling the model
+   done. It catches unformatted measures, missing descriptions and
+   inefficient relationships automatically.
+
+
+=====================================================================
+SECTION B -- LEGACY VIEW-BASED MEASURES
+=====================================================================
+These target the vw_* views from 02_kpi_views.sql and match the
+dashboard as currently built. Keep them until the star-schema model is
+live, then retire them.
+
+-- ==================== Live Machine Status ====================
+
+Machines Running =
+CALCULATE ( COUNTROWS ( vw_live_machine_status ), vw_live_machine_status[status] = "RUNNING" )
+
+Machines Idle =
+CALCULATE ( COUNTROWS ( vw_live_machine_status ), vw_live_machine_status[status] = "IDLE" )
+
+Machines Down =
+CALCULATE ( COUNTROWS ( vw_live_machine_status ), vw_live_machine_status[status] = "DOWN" )
+
+Machines Fault =
+CALCULATE ( COUNTROWS ( vw_live_machine_status ), vw_live_machine_status[status] = "FAULT" )
+
+Fleet Online % =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( vw_live_machine_status ), vw_live_machine_status[connectivity] = "ONLINE" ),
+    COUNTROWS ( vw_live_machine_status )
+)
+
+-- ==================== Temperature ====================
+
+Avg Temperature (1h)  = AVERAGE ( vw_avg_temperature[avg_temp_last_1h] )
+Avg Temperature (24h) = AVERAGE ( vw_avg_temperature[avg_temp_last_24h] )
+Max Temperature (24h) = MAX ( vw_avg_temperature[max_temp_last_24h] )
+
+-- ==================== Alerts ====================
+-- NOTE: this returns ~15M because public.failure_alerts contains one
+-- row per micro-batch rather than one per alert occurrence. Fixed by
+-- sql/06_migration_backfill.sql. Until then the number is not usable.
+
+Active Alerts (legacy) =
+CALCULATE ( COUNTROWS ( vw_failure_alerts ), vw_failure_alerts[acknowledged] = FALSE () )
+
+Critical Alerts (legacy) =
+CALCULATE ( COUNTROWS ( vw_failure_alerts ), vw_failure_alerts[severity] = "CRITICAL" )
+
+-- ==================== Utilization / Power / Downtime ====================
+
+Utilization % (legacy)   = AVERAGE ( vw_machine_utilization[utilization_pct] )
+Total Power (kWh legacy) = SUM ( vw_power_consumption[total_kwh] )
+Downtime (min legacy)    = SUM ( vw_downtime[total_downtime_minutes] )
+Downtime Events (legacy) = SUM ( vw_downtime[downtime_events] )
+
+-- ==================== OEE ====================
+-- These views return percentages already scaled 0-100, so divide by 100
+-- if you format the measure as a percentage.
+
+Availability % (legacy) = AVERAGE ( vw_oee[availability_pct] ) / 100
+Performance % (legacy)  = AVERAGE ( vw_oee[performance_pct] )  / 100
+Quality % (legacy)      = AVERAGE ( vw_oee[quality_pct] )      / 100
+OEE % (legacy)          = AVERAGE ( vw_oee[oee_pct] )          / 100

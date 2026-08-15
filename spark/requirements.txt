@@ -1,0 +1,16 @@
+# Spark streaming job dependencies
+#
+# The PostgreSQL JDBC driver is NOT pip-installable. It is pulled at submit
+# time via the --packages flag, which is embedded in PYSPARK_SUBMIT_ARGS:
+#
+#   $env:PYSPARK_SUBMIT_ARGS = "--packages " +
+#       "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0," +
+#       "org.postgresql:postgresql:42.7.3 pyspark-shell"
+#
+# Requires Python 3.11 and a JDK 17 install on PATH.
+
+pyspark==3.5.0
+
+# ---- Test dependencies ----
+# Run with:  py -3.11 -m pytest spark/ -v
+pytest==8.2.0

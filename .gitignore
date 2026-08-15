@@ -1,0 +1,70 @@
+# =====================================================================
+# IoT Device Data Streamlining -- git ignore
+# =====================================================================
+
+# ---- Secrets ----
+# .env.example IS committed; the real .env never is
+.env
+*.env
+!.env.example
+
+# ---- Spark ----
+# Streaming checkpoints are machine-local state, not source.
+# Committing them will make the job resume from another machine's offsets.
+spark/checkpoints/
+checkpoints/
+metastore_db/
+derby.log
+spark-warehouse/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# ---- Debug / run output ----
+# Captured with Tee-Object while troubleshooting; regenerate rather than commit
+benchmark_results.txt
+migration_check.txt
+*.log
+nohup.out
+
+# ---- Power BI ----
+# The .pbix IS committed -- it is the deliverable.
+# Temp and cache files are not.
+*.pbix.tmp
+*~$*.pbix
+.pbi/
+
+# ---- Postgres dumps ----
+*.dump
+*.sql.gz
+backups/
+
+# ---- OS ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*
+
+# ---- Editors ----
+.vscode/
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# ---- Ivy / Maven cache (pulled by --packages) ----
+.ivy2/
+.m2/
+
+# ---- Supervisor / ops output ----
+logs/

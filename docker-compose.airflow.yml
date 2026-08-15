@@ -1,0 +1,109 @@
+# =============================================================================
+# Airflow -- OPTIONAL OVERLAY
+#
+# Kept in a separate file deliberately. The base stack in docker-compose.yml
+# is unchanged and still works on its own; nothing here runs unless you ask
+# for it explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.airflow.yml up -d
+#
+# To stop just Airflow and leave the pipeline running:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.airflow.yml stop airflow
+#
+# ONE container, not the usual four. The standard Airflow compose file runs a
+# webserver, a scheduler, a triggerer and its own metadata database. At the
+# scale of three DAGs that is four containers of ceremony, so this uses
+# `airflow standalone` (webserver + scheduler + triggerer in one process) and
+# borrows the PostgreSQL instance the warehouse already runs on, in a separate
+# `airflow` database.
+#
+# UI: http://localhost:8080   (credentials printed to the container logs on
+# first start -- `docker logs iot-airflow | Select-String password`)
+# =============================================================================
+
+services:
+  # Run-once container that creates the Airflow metadata database.
+  #
+  # This cannot be done from inside the Airflow container: its entrypoint
+  # verifies the metadata connection before it reaches any command you give
+  # it, so a bootstrap step in `command:` never executes -- the container
+  # fails first with 'database "airflow" does not exist'.
+  #
+  # Uses the postgres image purely because it ships psql. Exits immediately;
+  # Airflow waits for it to complete successfully.
+  airflow-init:
+    image: postgres:16
+    container_name: iot-airflow-init
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-iot_password}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        if psql -h postgres -U ${POSTGRES_USER:-iot_user} -d ${POSTGRES_DB:-iot_dashboard} \
+             -tAc "SELECT 1 FROM pg_database WHERE datname='airflow'" | grep -q 1; then
+          echo "database airflow already present"
+        else
+          psql -h postgres -U ${POSTGRES_USER:-iot_user} -d ${POSTGRES_DB:-iot_dashboard} \
+               -c "CREATE DATABASE airflow"
+          echo "created database airflow"
+        fi
+
+  airflow:
+    image: apache/airflow:2.9.3-python3.11
+    container_name: iot-airflow
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    ports:
+      # 8081 is Adminer, so Airflow takes 8080.
+      - "8080:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/project
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+        postgresql+psycopg2://${POSTGRES_USER:-iot_user}:${POSTGRES_PASSWORD:-iot_password}@postgres:5432/airflow
+      # Connection the DAGs use. Defined as an env var rather than created in
+      # the UI so a fresh start needs no manual setup.
+      AIRFLOW_CONN_IOT_POSTGRES: >-
+        postgresql://${POSTGRES_USER:-iot_user}:${POSTGRES_PASSWORD:-iot_password}@postgres:5432/${POSTGRES_DB:-iot_dashboard}
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "60"
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      AIRFLOW__CORE__PARALLELISM: "4"
+      _PIP_ADDITIONAL_REQUIREMENTS: ""
+    volumes:
+      # Project mounted read-only. Airflow reads DAGs from here and cannot
+      # modify anything in the repository.
+      - .:/opt/project:ro
+      - airflow_logs:/opt/airflow/logs
+    # The image entrypoint prepends `airflow`, so this runs `airflow
+    # standalone` -- webserver, scheduler and triggerer in one process, with
+    # an admin user created on first start.
+    command: standalone
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          # Airflow is the heaviest component in the stack and this machine
+          # also runs Spark on the host. Capping it prevents the scheduler
+          # from starving the streaming job, which has died from resource
+          # pressure on this setup before.
+          memory: 2048M
+
+volumes:
+  airflow_logs:
