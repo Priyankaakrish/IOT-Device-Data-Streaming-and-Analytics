@@ -12,7 +12,7 @@
 ![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-[![CI](https://github.com/Priyankaakrish/IOT-Device-Data-Streamlining-and-Analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/Priyankaakrish/IOT-Device-Data-Streamlining-and-Analytics/actions/workflows/ci.yml)
+<!-- Check the repo name below matches yours; the badge 404s silently if not. -->
 
 ---
 
@@ -338,15 +338,18 @@ Three pages built on the star schema, each answering one question.
 
 ### Page 1 — Overview
 
-<img src="docs/images/page1-overview.png" alt="Executive overview page showing OEE, Availability and Quality KPI bands above a 30-day trend, a machine summary table, and alerts, downtime and energy panels" width="100%">
+<img width="658" height="331" alt="Executive overview page showing OEE, Availability and Quality KPI bands above a 30-day trend, a machine summary table, and alerts, downtime and energy panels" src="https://github.com/user-attachments/assets/43cb8249-0ea9-4a2e-a7db-35e2c1faca23" />
+<h4>Executive overview page showing OEE, Availability and Quality KPI bands above a 30-day trend, a machine summary table, and alerts, downtime and energy panels</h4>
 
 ### Page 2 — Production Performance
 
-<img src="docs/images/page2-production.png" alt="Production performance page showing units produced, performance and scrap KPIs, OEE components by machine, OEE by shift, energy trend and an OEE loss waterfall" width="100%">
+<img width="661" height="348" alt="image" src="https://github.com/user-attachments/assets/8488de90-58bb-45a1-8aa5-38daca5e3dfb" />
+<h4>Production performance page showing units produced, performance and scrap KPIs, OEE components by machine, OEE by shift, energy trend and an OEE loss waterfall</h4>
 
 ### Page 3 — Maintenance &amp; Reliability
 
-<img src="docs/images/page3-maintenance.png" alt="Maintenance and reliability page showing MTBF and MTTR, alert volume by type and severity, a reliability quadrant scatter, downtime by machine and a live alert log" width="100%">
+<img width="655" height="338" alt="image" src="https://github.com/user-attachments/assets/90f92ef8-68d4-4220-9628-304703d852f3" />
+<h4>Maintenance and reliability page showing MTBF and MTTR, alert volume by type and severity, a reliability quadrant scatter, downtime by machine and a live alert log</h4>
 
 **Design:** navy `#0F2537` / orange `#E8622C` theme applied via `powerbi/theme.json`, sidebar page navigation with selected-state highlighting, coloured KPI bands seated flush above each chart panel.
 
@@ -457,8 +460,8 @@ The honest conclusion in [`docs/STAR_VS_SNOWFLAKE.md`](docs/STAR_VS_SNOWFLAKE.md
 
 ```bash
 # 1. Clone
-git clone https://github.com/Priyankaakrish/IOT-Device-Data-Streamlining-and-Analytics.git
-cd IOT-Device-Data-Streamlining-and-Analytics
+git clone https://github.com/Priyankaakrish/iot-streaming-dashboard.git
+cd iot-streaming-dashboard
 
 # 2. Configure
 cp .env.example .env
@@ -592,6 +595,9 @@ One container, not the usual four. The standard Airflow deployment runs a webser
 | `iot_platform_daily` | `0 5 * * *` | 12 | Batch/ETL and Data Quality in parallel, converging on a warehouse gate |
 | `iot_data_quality` | `15 * * * *` | 5 | Quality gates alone, hourly, between daily runs |
 | `iot_retention` | `0 3 1 * *` | 1 | Partition retention — **ships paused**, it is irreversible |
+
+<img width="1360" height="602" alt="image" src="https://github.com/user-attachments/assets/af2523ab-7ff7-4a76-9d7a-c895fdf501d4" />
+
 
 ### `iot_platform_daily` structure
 
